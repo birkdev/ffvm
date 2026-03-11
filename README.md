@@ -69,3 +69,11 @@ ffvm batch-sweep ./videos --vcodec libsvtav1 --target-vmaf 95.0
 2. Binary searches through the CRF range, encoding and VMAF-scoring each segment per iteration
 3. Converges when `crf_max - crf_min <= 1`
 4. Encodes the full video at the resulting CRF
+
+## Roadmap
+
+- [ ] RAM disk support for intermediate files
+- [ ] Test suite (unit tests for pure functions, integration tests for encode pipeline)
+- [ ] Better error handling for ffmpeg subprocess failures
+- [ ] Robust VMAF score parsing
+- [ ] Logging for long-running operations (sweep, batch)
