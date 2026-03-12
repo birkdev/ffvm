@@ -77,3 +77,4 @@ ffvm batch-sweep ./videos --vcodec libsvtav1 --target-vmaf 95.0
 - [ ] Better error handling for ffmpeg subprocess failures
 - [ ] Robust VMAF score parsing
 - [ ] Logging for long-running operations (sweep, batch)
+- [ ] UI improvements (progress display, summary tables)
