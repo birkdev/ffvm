@@ -1,14 +1,16 @@
-from typing import Optional
-from enum import Enum
 from tempfile import TemporaryDirectory
 from shutil import which
 from rich.progress import Progress
 from rich.console import Console
 from rich.table import Table
+from rich.text import Text
+from typing import Optional
 from pathlib import Path
+from enum import Enum
+import subprocess
 import threading
 import typer
-import subprocess
+import time
 import re
 
 app = typer.Typer()
@@ -100,6 +102,34 @@ def get_duration(video: Path) -> float:
     total_duration = subprocess.run(command, capture_output=True, text=True)
 
     return float(total_duration.stdout.strip())
+
+
+def size_converter(size: float) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+
+    for unit in units:
+        if size > 1024:
+            size /= 1024
+        else:
+            if size >= 10:
+                return f"{size:.0f} {unit}"
+            else:
+                return f"{size:.1f} {unit}"
+
+    if size >= 10:
+        return f"{size:.0f} {units[-1]}"
+    else:
+        return f"{size:.1f} {units[-1]}"
+
+
+def format_time(seconds: float) -> str:
+    if seconds < 60:
+        return f"{int(seconds)}s"
+
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+
+    return f"{minutes}m {secs}s"
 
 
 def extract_segments(input_video: Path) -> list[tuple[float, float]]:
@@ -309,28 +339,46 @@ def encode(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
+    input_size = input_video.stat().st_size
+
     encode_cmd = build_encode_cmd(
         input_video, output_video, vcodec, crf, acodec, ab, resolution
     )
 
+    encode_start = time.time()
     run_with_progress(
         encode_cmd,
         get_duration(input_video),
         "Encoding...",
     )
+    encode_time = format_time(time.time() - encode_start)
+
+    output_size = output_video.stat().st_size
+    reduction = (1 - output_size / input_size) * 100
+
+    table = Table(title="Results")
+    table.add_column("Video", style="cyan", justify="center")
+    table.add_column("Size Reduction", justify="center")
+    table.add_column("Encode Time", justify="center")
+
+    row = [
+        Text(output_video.name, justify="left"),
+        Text(
+            f"{size_converter(input_size)} → {size_converter(output_size)} "
+            f"({reduction:.0f}%)",
+            justify="right",
+        ),
+        Text(encode_time, justify="right"),
+    ]
 
     if compare:
+        table.add_column("VMAF", justify="center")
         vmaf_cmd = build_vmaf_cmd(output_video, input_video)
         score = run_vmaf(vmaf_cmd, get_duration(input_video), "Scoring...")
-        console.print(
-            f"[bold green]Successfully encoded[/bold green] [cyan]{input_video}[/cyan]"
-        )
-        console.print(f"[bold green]VMAF score:[/bold green] [cyan]{score}[/cyan]")
+        row.append(Text(str(score), justify="right"))
 
-    else:
-        console.print(
-            f"[bold green]Successfully encoded[/bold green] [cyan]{input_video}[/cyan]"
-        )
+    table.add_row(*row)
+    console.print(table)
 
 
 @app.command()
@@ -340,12 +388,11 @@ def batch(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int = 23,
-    # optional vcodec parameters here soon
+    # optional vcodec parameters
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
     compare: bool = False,
-    # verbose: bool = False,
     overwrite: bool = False,
     recursive: bool = False,
     output_dir: Optional[Path] = typer.Option(None, file_okay=False, resolve_path=True),
@@ -355,7 +402,13 @@ def batch(
 
     input_videos = find_videos(input_dir, recursive)
     output_videos = make_output_paths(input_dir, output_dir, input_videos, vcodec, crf)
+
+    input_sizes = []
+    output_sizes = []
+    size_reductions = []
+    encode_times = []
     vmaf_scores = []
+    vmaf_times = []
 
     if not overwrite:
         for output_file in output_videos:
@@ -368,31 +421,55 @@ def batch(
             input_video, output_video, vcodec, crf, acodec, ab, resolution
         )
 
+        encode_start = time.time()
+        input_sizes.append(input_video.stat().st_size)
+
         run_with_progress(
             encode_cmd,
             get_duration(input_video),
             "Encoding...",
         )
 
+        encode_times.append(format_time(time.time() - encode_start))
+        output_sizes.append(output_video.stat().st_size)
+
         if compare:
+            vmaf_start = time.time()
             vmaf_cmd = build_vmaf_cmd(output_video, input_video)
             score = run_vmaf(vmaf_cmd, get_duration(input_video), "Scoring...")
             vmaf_scores.append(score)
+            vmaf_times.append(format_time(time.time() - vmaf_start))
 
-    console.print(
-        "[bold green]Successfully encoded[/bold green] [cyan]all videos[/cyan]"
-    )
-    console.print()
+    table = Table(title="Results")
+    table.add_column("Video", style="cyan", justify="center")
+    table.add_column("Size Reduction", justify="center")
+    table.add_column("Encode Time", justify="center")
 
     if compare:
-        table = Table(title="VMAF Scores")
-        table.add_column("Video", style="cyan")
-        table.add_column("Score", style="magenta", justify="right")
+        table.add_column("VMAF", justify="center")
+        table.add_column("Score Time")
 
-        for output_video, score in zip(output_videos, vmaf_scores):
-            table.add_row(output_video.name, str(score))
+    for in_size, out_size in zip(input_sizes, output_sizes):
+        size_reductions.append((1 - out_size / in_size) * 100)
 
-        console.print(table)
+    for vid, in_size, out_size, reduction, t in zip(
+        output_videos, input_sizes, output_sizes, size_reductions, encode_times
+    ):
+        row = [
+            Text(vid.name, justify="left"),
+            Text(
+                f"{size_converter(in_size)} → {size_converter(out_size)} "
+                f"({reduction:.0f}%)",
+                justify="right",
+            ),
+            Text(t, justify="right"),
+        ]
+        if compare:
+            row.append(Text(str(vmaf_scores.pop(0)), justify="right"))
+            row.append(Text(str(vmaf_times.pop(0)), justify="right"))
+        table.add_row(*row)
+
+    console.print(table)
 
 
 @app.command()
@@ -414,16 +491,38 @@ def sweep(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
+    input_size = input_video.stat().st_size
+
     crf = sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max)
 
     cmd = build_encode_cmd(
         input_video, output_video, vcodec, crf, acodec, ab, resolution
     )
-    run_with_progress(cmd, get_duration(input_video), "Encoding...")
 
-    console.print(
-        f"[bold green]Successfully encoded[/bold green] [cyan]{input_video}[/cyan]"
+    encode_start = time.time()
+    run_with_progress(cmd, get_duration(input_video), "Encoding...")
+    encode_time = format_time(time.time() - encode_start)
+
+    output_size = output_video.stat().st_size
+    reduction = (1 - output_size / input_size) * 100
+
+    table = Table(title="Results")
+    table.add_column("Video", style="cyan", justify="center")
+    table.add_column("Size Reduction", justify="center")
+    table.add_column("CRF", justify="center")
+    table.add_column("Encode Time", justify="center")
+
+    table.add_row(
+        Text(output_video.name, justify="left"),
+        Text(
+            f"{size_converter(input_size)} → {size_converter(output_size)} "
+            f"({reduction:.0f}%)",
+            justify="right",
+        ),
+        Text(str(crf), justify="right"),
+        Text(encode_time, justify="right"),
     )
+    console.print(table)
 
 
 @app.command()
@@ -439,7 +538,6 @@ def batch_sweep(
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
-    # verbose: bool = False,
     overwrite: bool = False,
     recursive: bool = False,
     output_dir: Optional[Path] = typer.Option(None, file_okay=False, resolve_path=True),
@@ -462,20 +560,51 @@ def batch_sweep(
                 typer.confirm(f"{output_file} already exists. Overwrite?", abort=True)
                 print("\033[A\033[2K", end="")
 
+    input_sizes = []
+    output_sizes = []
+    size_reductions = []
+    encode_times = []
+
     for input_video, output_video, c in zip(input_videos, output_videos, crfs):
         encode_cmd = build_encode_cmd(
             input_video, output_video, vcodec, c, acodec, ab, resolution
         )
 
+        input_sizes.append(input_video.stat().st_size)
+
+        encode_start = time.time()
         run_with_progress(
             encode_cmd,
             get_duration(input_video),
             "Encoding...",
         )
+        encode_times.append(format_time(time.time() - encode_start))
+        output_sizes.append(output_video.stat().st_size)
 
-    console.print(
-        "[bold green]Successfully encoded[/bold green] [cyan]all videos[/cyan]"
-    )
+    for in_size, out_size in zip(input_sizes, output_sizes):
+        size_reductions.append((1 - out_size / in_size) * 100)
+
+    table = Table(title="Results")
+    table.add_column("Video", style="cyan", justify="center")
+    table.add_column("Size Reduction", justify="center")
+    table.add_column("CRF", justify="center")
+    table.add_column("Encode Time", justify="center")
+
+    for vid, in_size, out_size, reduction, c, t in zip(
+        output_videos, input_sizes, output_sizes, size_reductions, crfs, encode_times
+    ):
+        table.add_row(
+            Text(vid.name, justify="left"),
+            Text(
+                f"{size_converter(in_size)} → {size_converter(out_size)} "
+                f"({reduction:.0f}%)",
+                justify="right",
+            ),
+            Text(str(c), justify="right"),
+            Text(t, justify="right"),
+        )
+
+    console.print(table)
 
 
 if __name__ == "__main__":
