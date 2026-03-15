@@ -301,13 +301,21 @@ def sweeping(
         while crf_max - crf_min > 1:
             vmaf_scores = []
 
-            for test_video in test_videos:
+            for i, test_video in enumerate(test_videos, start=1):
                 output_video = tmp / f"{test_video.stem}_crf{crf}.mp4"
                 cmd = build_encode_cmd(test_video, output_video, vcodec, crf)
-                run_with_progress(cmd, get_duration(test_video), "Encoding...")
+                run_with_progress(
+                    cmd,
+                    get_duration(test_video),
+                    f"Sweeping CRF {crf} [{i}/{len(test_videos)}] Encoding",
+                )
 
                 cmd = build_vmaf_cmd(output_video, test_video)
-                score = run_vmaf(cmd, get_duration(test_video), "Scoring...")
+                score = run_vmaf(
+                    cmd,
+                    get_duration(test_video),
+                    f"Sweeping CRF {crf} [{i}/{len(test_videos)}] Scoring",
+                )
                 vmaf_scores.append(score)
 
             average_vmaf = sum(vmaf_scores) / len(vmaf_scores)
@@ -349,7 +357,7 @@ def encode(
     run_with_progress(
         encode_cmd,
         get_duration(input_video),
-        "Encoding...",
+        f"Encoding {input_video.name}",
     )
     encode_time = format_time(time.time() - encode_start)
 
@@ -374,7 +382,9 @@ def encode(
     if compare:
         table.add_column("VMAF", justify="center")
         vmaf_cmd = build_vmaf_cmd(output_video, input_video)
-        score = run_vmaf(vmaf_cmd, get_duration(input_video), "Scoring...")
+        score = run_vmaf(
+            vmaf_cmd, get_duration(input_video), f"Scoring {output_video.name}"
+        )
         row.append(Text(str(score), justify="right"))
 
     table.add_row(*row)
@@ -416,7 +426,9 @@ def batch(
                 typer.confirm(f"{output_file} already exists. Overwrite?", abort=True)
                 print("\033[A\033[2K", end="")
 
-    for input_video, output_video in zip(input_videos, output_videos):
+    for i, (input_video, output_video) in enumerate(
+        zip(input_videos, output_videos), start=1
+    ):
         encode_cmd = build_encode_cmd(
             input_video, output_video, vcodec, crf, acodec, ab, resolution
         )
@@ -427,7 +439,7 @@ def batch(
         run_with_progress(
             encode_cmd,
             get_duration(input_video),
-            "Encoding...",
+            f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
         )
 
         encode_times.append(format_time(time.time() - encode_start))
@@ -436,7 +448,11 @@ def batch(
         if compare:
             vmaf_start = time.time()
             vmaf_cmd = build_vmaf_cmd(output_video, input_video)
-            score = run_vmaf(vmaf_cmd, get_duration(input_video), "Scoring...")
+            score = run_vmaf(
+                vmaf_cmd,
+                get_duration(input_video),
+                f"Scoring [{i}/{len(input_videos)}] {output_video.name}",
+            )
             vmaf_scores.append(score)
             vmaf_times.append(format_time(time.time() - vmaf_start))
 
@@ -500,7 +516,7 @@ def sweep(
     )
 
     encode_start = time.time()
-    run_with_progress(cmd, get_duration(input_video), "Encoding...")
+    run_with_progress(cmd, get_duration(input_video), f"Encoding {input_video.name}")
     encode_time = format_time(time.time() - encode_start)
 
     output_size = output_video.stat().st_size
@@ -565,7 +581,9 @@ def batch_sweep(
     size_reductions = []
     encode_times = []
 
-    for input_video, output_video, c in zip(input_videos, output_videos, crfs):
+    for i, (input_video, output_video, c) in enumerate(
+        zip(input_videos, output_videos, crfs), start=1
+    ):
         encode_cmd = build_encode_cmd(
             input_video, output_video, vcodec, c, acodec, ab, resolution
         )
@@ -576,7 +594,7 @@ def batch_sweep(
         run_with_progress(
             encode_cmd,
             get_duration(input_video),
-            "Encoding...",
+            f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
         )
         encode_times.append(format_time(time.time() - encode_start))
         output_sizes.append(output_video.stat().st_size)
