@@ -1,11 +1,11 @@
 from tempfile import TemporaryDirectory
-from shutil import which
 from rich.progress import Progress
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 from typing import Optional
 from pathlib import Path
+from shutil import which
 from enum import Enum
 import subprocess
 import threading
@@ -59,9 +59,42 @@ def find_videos(path: Path, recursive: bool = False) -> list[Path]:
     return [f for f in path.glob("*") if f.suffix.lower() in video_containers]
 
 
+def clamp_crf(crf: int = 23, vcodec: VideoCodecs = VideoCodecs.libx264) -> int:
+    if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf > 51:
+        console.print(
+            "CRF value too high! Automatically lowered to [cyan]51[/cyan].",
+            style="yellow",
+        )
+        crf = 51
+
+    return crf
+
+
+def clamp_sweep_crf(
+    crf_min: int = 23, crf_max: int = 32, vcodec: VideoCodecs = VideoCodecs.libx264
+) -> tuple[int, int]:
+    if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf_max > 51:
+        console.print(
+            "Max CRF value too high! Automatically lowered to [cyan]51[/cyan]."
+        )
+        crf_max = 51
+
+    if crf_min > crf_max:
+        crf_min = crf_max * 2 // 3
+        console.print(
+            "Min CRF value higher than max CRF value! "
+            f"Automatically lowered min CRF to [cyan]{crf_min}[/cyan]."
+        )
+
+    if crf_max - crf_min < 2:
+        raise typer.BadParameter("CRF range too narrow for sweep")
+
+    return crf_min, crf_max
+
+
 def make_output_paths(
-    input_dir,
-    output_dir,
+    input_dir: Path,
+    output_dir: Path,
     input_videos: list[Path],
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int | list[int] = 23,
@@ -242,31 +275,29 @@ def read_stderr(process: subprocess.Popen[str], output: list[str]) -> None:
         output.append(process.stderr.read())
 
 
-def run_with_progress(
-    command, duration, description, capture_stderr=False
-) -> str | None:
+def run_with_progress(command, duration, description) -> str:
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE if capture_stderr else subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
     )
+
     stderr = []
+    stderr_thread = threading.Thread(target=read_stderr, args=(process, stderr))
+    stderr_thread.start()
+    progress_bar(duration, description, process)
+    stderr_thread.join()
+    process.wait()
 
-    if capture_stderr:
-        stderr_thread = threading.Thread(target=read_stderr, args=(process, stderr))
-        stderr_thread.start()
-        progress_bar(duration, description, process)
-        stderr_thread.join()
+    if process.returncode != 0:
+        raise RuntimeError(f"ffmpeg failed: {''.join(stderr)}")
 
-    else:
-        progress_bar(duration, description, process)
-
-    return "".join(stderr) if capture_stderr else None
+    return "".join(stderr)
 
 
 def run_vmaf(command, duration, description):
-    output = run_with_progress(command, duration, description, capture_stderr=True)
+    output = run_with_progress(command, duration, description)
 
     if output is None:
         return 0.0
@@ -335,7 +366,7 @@ def encode(
         ..., exists=True, dir_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
-    crf: int = 23,
+    crf: int = typer.Option(23, min=0, max=63),
     # optional vcodec parameters here soon
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
@@ -347,6 +378,8 @@ def encode(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
+    crf = clamp_crf(crf, vcodec)
+
     input_size = input_video.stat().st_size
 
     encode_cmd = build_encode_cmd(
@@ -354,11 +387,18 @@ def encode(
     )
 
     encode_start = time.time()
-    run_with_progress(
-        encode_cmd,
-        get_duration(input_video),
-        f"Encoding {input_video.name}",
-    )
+
+    try:
+        run_with_progress(
+            encode_cmd,
+            get_duration(input_video),
+            f"Encoding {input_video.name}",
+        )
+
+    except RuntimeError as e:
+        console.print(f"[bold red]Encoding failed: {e}[/bold red]")
+        raise typer.Exit(1)
+
     encode_time = format_time(time.time() - encode_start)
 
     output_size = output_video.stat().st_size
@@ -397,7 +437,7 @@ def batch(
         ..., exists=True, file_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
-    crf: int = 23,
+    crf: int = typer.Option(23, min=0, max=63),
     # optional vcodec parameters
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
@@ -409,6 +449,8 @@ def batch(
 ):
     if output_dir is None:
         output_dir = input_dir
+
+    crf = clamp_crf(crf, vcodec)
 
     input_videos = find_videos(input_dir, recursive)
     output_videos = make_output_paths(input_dir, output_dir, input_videos, vcodec, crf)
@@ -434,27 +476,31 @@ def batch(
         )
 
         encode_start = time.time()
-        input_sizes.append(input_video.stat().st_size)
 
-        run_with_progress(
-            encode_cmd,
-            get_duration(input_video),
-            f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
-        )
-
-        encode_times.append(format_time(time.time() - encode_start))
-        output_sizes.append(output_video.stat().st_size)
-
-        if compare:
-            vmaf_start = time.time()
-            vmaf_cmd = build_vmaf_cmd(output_video, input_video)
-            score = run_vmaf(
-                vmaf_cmd,
+        try:
+            run_with_progress(
+                encode_cmd,
                 get_duration(input_video),
-                f"Scoring [{i}/{len(input_videos)}] {output_video.name}",
+                f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
             )
-            vmaf_scores.append(score)
-            vmaf_times.append(format_time(time.time() - vmaf_start))
+            input_sizes.append(input_video.stat().st_size)
+            encode_times.append(format_time(time.time() - encode_start))
+            output_sizes.append(output_video.stat().st_size)
+
+            if compare:
+                vmaf_start = time.time()
+                vmaf_cmd = build_vmaf_cmd(output_video, input_video)
+                score = run_vmaf(
+                    vmaf_cmd,
+                    get_duration(input_video),
+                    f"Scoring [{i}/{len(input_videos)}] {output_video}",
+                )
+                vmaf_scores.append(score)
+                vmaf_times.append(format_time(time.time() - vmaf_start))
+
+        except RuntimeError as e:
+            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            continue
 
     table = Table(title="Results")
     table.add_column("Video", style="cyan", justify="center")
@@ -495,9 +541,9 @@ def sweep(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     # optional vcodec parameters
-    target_vmaf: float = 93.0,
-    crf_min: int = 23,
-    crf_max: int = 32,
+    target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
+    crf_min: int = typer.Option(23, min=0, max=62),
+    crf_max: int = typer.Option(32, min=1, max=63),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -507,16 +553,32 @@ def sweep(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
+    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max, vcodec)
+
     input_size = input_video.stat().st_size
 
-    crf = sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max)
+    try:
+        crf = sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max)
+
+    except RuntimeError as e:
+        console.print(f"[bold red]Sweep failed: {e}[/bold red]")
+        raise typer.Exit(1)
 
     cmd = build_encode_cmd(
         input_video, output_video, vcodec, crf, acodec, ab, resolution
     )
 
     encode_start = time.time()
-    run_with_progress(cmd, get_duration(input_video), f"Encoding {input_video.name}")
+
+    try:
+        run_with_progress(
+            cmd, get_duration(input_video), f"Encoding {input_video.name}"
+        )
+
+    except RuntimeError as e:
+        console.print(f"[bold red]Encoding failed: {e}[/bold red]")
+        raise typer.Exit(1)
+
     encode_time = format_time(time.time() - encode_start)
 
     output_size = output_video.stat().st_size
@@ -548,9 +610,9 @@ def batch_sweep(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     # optional vcodec parameters
-    target_vmaf: float = 93.0,
-    crf_min: int = 23,
-    crf_max: int = 32,
+    target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
+    crf_min: int = typer.Option(23, min=0, max=62),
+    crf_max: int = typer.Option(32, min=1, max=63),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -561,13 +623,23 @@ def batch_sweep(
     if output_dir is None:
         output_dir = input_dir
 
+    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max, vcodec)
+
     input_videos = find_videos(input_dir, recursive)
     output_videos = []
+    successful_videos = []
     crfs = []
 
     for input_video in input_videos:
-        crfs.append(sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max))
+        try:
+            crfs.append(sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max))
+            successful_videos.append(input_video)
 
+        except RuntimeError as e:
+            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            continue
+
+    input_videos = successful_videos
     output_videos = make_output_paths(input_dir, output_dir, input_videos, vcodec, crfs)
 
     if not overwrite:
@@ -588,16 +660,21 @@ def batch_sweep(
             input_video, output_video, vcodec, c, acodec, ab, resolution
         )
 
-        input_sizes.append(input_video.stat().st_size)
-
         encode_start = time.time()
-        run_with_progress(
-            encode_cmd,
-            get_duration(input_video),
-            f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
-        )
-        encode_times.append(format_time(time.time() - encode_start))
-        output_sizes.append(output_video.stat().st_size)
+
+        try:
+            run_with_progress(
+                encode_cmd,
+                get_duration(input_video),
+                f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
+            )
+            input_sizes.append(input_video.stat().st_size)
+            encode_times.append(format_time(time.time() - encode_start))
+            output_sizes.append(output_video.stat().st_size)
+
+        except RuntimeError as e:
+            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            continue
 
     for in_size, out_size in zip(input_sizes, output_sizes):
         size_reductions.append((1 - out_size / in_size) * 100)
