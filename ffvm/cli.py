@@ -156,13 +156,17 @@ def size_converter(size: float) -> str:
 
 
 def format_time(seconds: float) -> str:
-    if seconds < 60:
-        return f"{int(seconds)}s"
-
-    minutes = int(seconds // 60)
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
 
-    return f"{minutes}m {secs}s"
+    if seconds < 60:
+        return f"{seconds}s"
+
+    if seconds < 3600:
+        return f"{minutes}m {secs}s"
+
+    return f"{hours}h {minutes}m"
 
 
 def extract_segments(input_video: Path) -> list[tuple[float, float]]:
@@ -360,7 +364,7 @@ def sweeping(
     return crf
 
 
-@app.command()
+@app.command(help="Encode a single video")
 def encode(
     input_video: Path = typer.Argument(
         ..., exists=True, dir_okay=False, resolve_path=True
@@ -431,7 +435,7 @@ def encode(
     console.print(table)
 
 
-@app.command()
+@app.command(help="Encode multiple videos")
 def batch(
     input_dir: Path = typer.Argument(
         ..., exists=True, file_okay=False, resolve_path=True
@@ -534,7 +538,7 @@ def batch(
     console.print(table)
 
 
-@app.command()
+@app.command(help="Find the optimal CRF for a target VMAF score")
 def sweep(
     input_video: Path = typer.Argument(
         ..., exists=True, dir_okay=False, resolve_path=True
@@ -603,7 +607,7 @@ def sweep(
     console.print(table)
 
 
-@app.command()
+@app.command(help="Find optimal CRF and encode multiple videos")
 def batch_sweep(
     input_dir: Path = typer.Argument(
         ..., exists=True, file_okay=False, resolve_path=True

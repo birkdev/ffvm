@@ -73,7 +73,7 @@ ffvm batch-sweep ./videos --vcodec libsvtav1 --target-vmaf 95.0
 ## Roadmap
 
 - [ ] RAM disk support for intermediate files
-- [ ] Test suite (unit tests for pure functions, integration tests for encode pipeline)
+- [x] Test suite (unit tests for pure functions, integration tests for encode pipeline)
 - [x] Better error handling for ffmpeg subprocess failures
 - [ ] Robust VMAF score parsing
 - [ ] Logging for long-running operations (sweep, batch)
