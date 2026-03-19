@@ -194,6 +194,7 @@ def build_encode_cmd(
     output_video: Path,
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int = 23,
+    preset: Optional[str] = None,
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -206,9 +207,12 @@ def build_encode_cmd(
         vcodec.value,
         "-crf",
         str(crf),
-        "-acodec",
-        acodec.value,
     ]
+
+    if preset:
+        cmd += ["-preset", preset]
+
+    cmd += ["-acodec", acodec.value]
 
     if ab:
         cmd += ["-ab", ab]
@@ -216,7 +220,7 @@ def build_encode_cmd(
     if resolution is not None:
         cmd += ["-s", resolution]
 
-    cmd += ["-progress", "pipe:1", "-y", output_video]
+    cmd += ["-movflags", "+faststart", "-progress", "pipe:1", "-y", output_video]
     return cmd
 
 
@@ -371,6 +375,7 @@ def encode(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int = typer.Option(23, min=0, max=63),
+    preset: Optional[str] = None,
     # optional vcodec parameters here soon
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
@@ -387,7 +392,7 @@ def encode(
     input_size = input_video.stat().st_size
 
     encode_cmd = build_encode_cmd(
-        input_video, output_video, vcodec, crf, acodec, ab, resolution
+        input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
     )
 
     encode_start = time.time()
@@ -442,6 +447,7 @@ def batch(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int = typer.Option(23, min=0, max=63),
+    preset: Optional[str] = None,
     # optional vcodec parameters
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
@@ -476,7 +482,7 @@ def batch(
         zip(input_videos, output_videos), start=1
     ):
         encode_cmd = build_encode_cmd(
-            input_video, output_video, vcodec, crf, acodec, ab, resolution
+            input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
         )
 
         encode_start = time.time()
@@ -544,6 +550,7 @@ def sweep(
         ..., exists=True, dir_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
+    preset: Optional[str] = None,
     # optional vcodec parameters
     target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
     crf_min: int = typer.Option(23, min=0, max=62),
@@ -569,7 +576,7 @@ def sweep(
         raise typer.Exit(1)
 
     cmd = build_encode_cmd(
-        input_video, output_video, vcodec, crf, acodec, ab, resolution
+        input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
     )
 
     encode_start = time.time()
@@ -613,6 +620,7 @@ def batch_sweep(
         ..., exists=True, file_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
+    preset: Optional[str] = None,
     # optional vcodec parameters
     target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
     crf_min: int = typer.Option(23, min=0, max=62),
@@ -661,7 +669,7 @@ def batch_sweep(
         zip(input_videos, output_videos, crfs), start=1
     ):
         encode_cmd = build_encode_cmd(
-            input_video, output_video, vcodec, c, acodec, ab, resolution
+            input_video, output_video, vcodec, c, preset, acodec, ab, resolution
         )
 
         encode_start = time.time()
