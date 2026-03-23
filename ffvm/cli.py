@@ -19,9 +19,16 @@ console = Console()
 
 def get_ffmpeg() -> str:
     path = which("ffmpeg")
+
     if path is None:
-        console.print("[bold red]ffmpeg not found in PATH[/bold red]")
+        console.print(
+            "[bold red][bold cyan]ffmpeg[/bold cyan] not found "
+            "in [bold yellow]PATH[/bold yellow]\n Install "
+            "[bold cyan]ffmpeg[/bold cyan] or add it to "
+            "your [bold yellow]PATH[/bold yellow][/bold red]"
+        )
         raise typer.Exit(1)
+
     return path
 
 
@@ -62,8 +69,8 @@ def find_videos(path: Path, recursive: bool = False) -> list[Path]:
 def clamp_crf(crf: int = 23, vcodec: VideoCodecs = VideoCodecs.libx264) -> int:
     if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf > 51:
         console.print(
-            "CRF value too high! Automatically lowered to [cyan]51[/cyan].",
-            style="yellow",
+            "[bold yellow]CRF value too high! Automatically "
+            "lowered to [bold cyan]51[/bold cyan].[/bold yellow]"
         )
         crf = 51
 
@@ -75,15 +82,17 @@ def clamp_sweep_crf(
 ) -> tuple[int, int]:
     if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf_max > 51:
         console.print(
-            "Max CRF value too high! Automatically lowered to [cyan]51[/cyan]."
+            "[bold yellow]Max CRF value too high! Automatically "
+            "lowered to [bold cyan]51[/bold cyan].[/bold yellow]"
         )
         crf_max = 51
 
     if crf_min > crf_max:
         crf_min = crf_max * 2 // 3
         console.print(
-            "Min CRF value higher than max CRF value! "
-            f"Automatically lowered min CRF to [cyan]{crf_min}[/cyan]."
+            "[bold yellow]Min CRF value higher than max CRF "
+            "value! Automatically lowered min CRF to "
+            f"[bold cyan]{crf_min}[/bold cyan].[/bold yellow]"
         )
 
     if crf_max - crf_min < 2:
@@ -132,9 +141,18 @@ def get_duration(video: Path) -> float:
         "default=noprint_wrappers=1:nokey=1",
         video,
     ]
-    total_duration = subprocess.run(command, capture_output=True, text=True)
+    result = subprocess.run(command, capture_output=True, text=True)
 
-    return float(total_duration.stdout.strip())
+    try:
+        return float(result.stdout.strip())
+
+    except ValueError:
+        console.print(
+            f"[bold yellow]ffprobe failed for "
+            f"[bold cyan]{video.name}[/bold cyan]:[/bold yellow] "
+            f"[bold red]{result.stderr.strip()}[/bold red]"
+        )
+        raise typer.Exit(1)
 
 
 def size_converter(size: float) -> str:
@@ -161,7 +179,7 @@ def format_time(seconds: float) -> str:
     secs = int(seconds % 60)
 
     if seconds < 60:
-        return f"{seconds}s"
+        return f"{secs}s"
 
     if seconds < 3600:
         return f"{minutes}m {secs}s"
@@ -205,16 +223,17 @@ def build_encode_cmd(
         input_video,
         "-vcodec",
         vcodec.value,
-        "-crf",
-        str(crf),
     ]
+
+    if vcodec.value != VideoCodecs.copy:
+        cmd += ["-crf", str(crf)]
 
     if preset:
         cmd += ["-preset", preset]
 
     cmd += ["-acodec", acodec.value]
 
-    if ab:
+    if acodec.value != AudioCodecs.copy and ab:
         cmd += ["-ab", ab]
 
     if resolution is not None:
@@ -307,14 +326,13 @@ def run_with_progress(command, duration, description) -> str:
 def run_vmaf(command, duration, description):
     output = run_with_progress(command, duration, description)
 
-    if output is None:
-        return 0.0
-
     for line in output.splitlines():
         match = re.search(r"VMAF score: (\d+\.\d+)", line)
 
         if match:
             return round(float(match.group(1)), 2)
+
+    return 0.0
 
 
 def sweeping(
@@ -405,7 +423,9 @@ def encode(
         )
 
     except RuntimeError as e:
-        console.print(f"[bold red]Encoding failed: {e}[/bold red]")
+        console.print(
+            f"[bold red]Encoding failed:[/bold red] [bold cyan]{e}[/bold cyan]"
+        )
         raise typer.Exit(1)
 
     encode_time = format_time(time.time() - encode_start)
@@ -463,6 +483,11 @@ def batch(
     crf = clamp_crf(crf, vcodec)
 
     input_videos = find_videos(input_dir, recursive)
+
+    if not input_videos:
+        console.print("[bold yellow]No video files found.[/bold yellow]")
+        raise typer.Exit(0)
+
     output_videos = make_output_paths(input_dir, output_dir, input_videos, vcodec, crf)
 
     input_sizes = []
@@ -509,7 +534,11 @@ def batch(
                 vmaf_times.append(format_time(time.time() - vmaf_start))
 
         except RuntimeError as e:
-            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            console.print(
+                f"[bold yellow]Skipping "
+                f"[bold cyan]{input_video.name}[/bold cyan]: "
+                f"{e}[/bold yellow]"
+            )
             continue
 
     table = Table(title="Results")
@@ -572,7 +601,7 @@ def sweep(
         crf = sweeping(input_video, vcodec, target_vmaf, crf_min, crf_max)
 
     except RuntimeError as e:
-        console.print(f"[bold red]Sweep failed: {e}[/bold red]")
+        console.print(f"[bold red]Sweep failed:[/bold red] [bold cyan]{e}[/bold cyan]")
         raise typer.Exit(1)
 
     cmd = build_encode_cmd(
@@ -587,7 +616,9 @@ def sweep(
         )
 
     except RuntimeError as e:
-        console.print(f"[bold red]Encoding failed: {e}[/bold red]")
+        console.print(
+            f"[bold red]Encoding failed:[/bold red] [bold cyan]{e}[/bold cyan]"
+        )
         raise typer.Exit(1)
 
     encode_time = format_time(time.time() - encode_start)
@@ -638,6 +669,11 @@ def batch_sweep(
     crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max, vcodec)
 
     input_videos = find_videos(input_dir, recursive)
+
+    if not input_videos:
+        console.print("[bold yellow]No video files found.[/bold yellow]")
+        raise typer.Exit(0)
+
     output_videos = []
     successful_videos = []
     crfs = []
@@ -648,7 +684,11 @@ def batch_sweep(
             successful_videos.append(input_video)
 
         except RuntimeError as e:
-            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            console.print(
+                f"[bold yellow]Skipping "
+                f"[bold cyan]{input_video.name}[/bold cyan]: "
+                f"{e}[/bold yellow]"
+            )
             continue
 
     input_videos = successful_videos
@@ -685,7 +725,11 @@ def batch_sweep(
             output_sizes.append(output_video.stat().st_size)
 
         except RuntimeError as e:
-            console.print(f"[yellow]Skipping {input_video.name}: {e}[/yellow]")
+            console.print(
+                f"[bold yellow]Skipping "
+                f"[bold cyan]{input_video.name}[/bold cyan]: "
+                f"{e}[/bold yellow]"
+            )
             continue
 
     for in_size, out_size in zip(input_sizes, output_sizes):

@@ -9,8 +9,12 @@ import typer
 import pytest
 
 
-def test_format_time_seconds():
+def test_format_time_seconds_int():
     assert format_time(45) == "45s"
+
+
+def test_format_time_seconds_float():
+    assert format_time(45.7) == "45s"
 
 
 def test_format_time_minutes():
