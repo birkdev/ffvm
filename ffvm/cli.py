@@ -364,14 +364,16 @@ def sweeping(
                 run_with_progress(
                     cmd,
                     get_duration(test_video),
-                    f"Sweeping CRF {crf} [{i}/{len(test_videos)}] Encoding",
+                    f"Sweeping CRF [bold cyan]{crf}[/bold cyan] "
+                    f"[{i}/{len(test_videos)}] Encoding",
                 )
 
                 cmd = build_vmaf_cmd(output_video, test_video)
                 score = run_vmaf(
                     cmd,
                     get_duration(test_video),
-                    f"Sweeping CRF {crf} [{i}/{len(test_videos)}] Scoring",
+                    f"Sweeping CRF [bold cyan]{crf}[/bold cyan] "
+                    f"[{i}/{len(test_videos)}] Scoring",
                 )
                 vmaf_scores.append(score)
 
@@ -419,7 +421,7 @@ def encode(
         run_with_progress(
             encode_cmd,
             get_duration(input_video),
-            f"Encoding {input_video.name}",
+            f"Encoding [bold cyan]{input_video.name}[/bold cyan]",
         )
 
     except RuntimeError as e:
@@ -452,9 +454,11 @@ def encode(
         table.add_column("VMAF", justify="center")
         vmaf_cmd = build_vmaf_cmd(output_video, input_video)
         score = run_vmaf(
-            vmaf_cmd, get_duration(input_video), f"Scoring {output_video.name}"
+            vmaf_cmd,
+            get_duration(input_video),
+            f"Scoring [bold cyan]{output_video.name}[/bold cyan]",
         )
-        row.append(Text(str(score), justify="right"))
+        row.append(Text(f"{score:.2f}", justify="right"))
 
     table.add_row(*row)
     console.print(table)
@@ -516,7 +520,8 @@ def batch(
             run_with_progress(
                 encode_cmd,
                 get_duration(input_video),
-                f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
+                f"Encoding [{i}/{len(input_videos)}] "
+                f"[bold cyan]{input_video.name}[/bold cyan]",
             )
             input_sizes.append(input_video.stat().st_size)
             encode_times.append(format_time(time.time() - encode_start))
@@ -528,7 +533,8 @@ def batch(
                 score = run_vmaf(
                     vmaf_cmd,
                     get_duration(input_video),
-                    f"Scoring [{i}/{len(input_videos)}] {output_video}",
+                    f"Scoring [{i}/{len(input_videos)}] "
+                    f"[bold cyan]{output_video.name}[/bold cyan]",
                 )
                 vmaf_scores.append(score)
                 vmaf_times.append(format_time(time.time() - vmaf_start))
@@ -566,7 +572,7 @@ def batch(
             Text(t, justify="right"),
         ]
         if compare:
-            row.append(Text(str(vmaf_scores.pop(0)), justify="right"))
+            row.append(Text(f"{vmaf_scores.pop(0):.2f}", justify="right"))
             row.append(Text(str(vmaf_times.pop(0)), justify="right"))
         table.add_row(*row)
 
@@ -612,7 +618,9 @@ def sweep(
 
     try:
         run_with_progress(
-            cmd, get_duration(input_video), f"Encoding {input_video.name}"
+            cmd,
+            get_duration(input_video),
+            f"Encoding [bold cyan]{input_video.name}[/bold cyan]",
         )
 
     except RuntimeError as e:
@@ -718,7 +726,8 @@ def batch_sweep(
             run_with_progress(
                 encode_cmd,
                 get_duration(input_video),
-                f"Encoding [{i}/{len(input_videos)}] {input_video.name}",
+                f"Encoding [{i}/{len(input_videos)}] "
+                f"[bold cyan]{input_video.name}[/bold cyan]",
             )
             input_sizes.append(input_video.stat().st_size)
             encode_times.append(format_time(time.time() - encode_start))

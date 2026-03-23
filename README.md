@@ -2,6 +2,8 @@
 
 A CLI tool for encoding videos with ffmpeg and scoring quality with VMAF. Supports single files, batch processing, and automatic CRF sweeping to hit a target VMAF score.
 
+![Results table](results_table.png)
+
 ## Installation
 
 Requires [ffmpeg](https://ffmpeg.org/) (built with libvmaf) and ffprobe in PATH.
