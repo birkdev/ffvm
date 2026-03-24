@@ -1,9 +1,7 @@
 from ffvm.cli import (
     format_time,
     size_converter,
-    clamp_crf,
     clamp_sweep_crf,
-    VideoCodecs,
 )
 import typer
 import pytest
@@ -55,18 +53,6 @@ def test_size_converter_tb():
 
 def test_size_converter_edge():
     assert size_converter(1024) == "1024 B"
-
-
-def test_clamp_crf_valid():
-    assert clamp_crf(25) == 25
-
-
-def test_clamp_crf_x264_high():
-    assert clamp_crf(78, VideoCodecs.libx264) == 51
-
-
-def test_clamp_crf_x264_limit():
-    assert clamp_crf(51, VideoCodecs.libx264) == 51
 
 
 def test_clamp_sweep_crf_valid():

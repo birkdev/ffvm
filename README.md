@@ -19,13 +19,15 @@ pip install ffvm
 Encode a single video file.
 
 ```
-ffvm encode input.mp4 output.mp4 --vcodec libx265 --crf 28
+ffvm encode input.mp4 output.mp4 --vcodec libsvtav1 --crf 28 --preset 5 --extra "-svtav1-params tune=0:enable-qm=1:qm-min=0" --extra "-write_tmcd 0"
 ```
 
 Options:
-- `--vcodec` — Video codec: `copy`, `libx264`, `libx265`, `libsvtav1` (default: `libx264`)
+- `--vcodec` — Video codec: `copy`, `libx264`, `libx265`, `libsvtav1`, `libvpx-vp9`, `libaom-av1`, `librav1e` (default: `libx264`)
 - `--crf` — Constant Rate Factor (default: `23`)
-- `--acodec` — Audio codec: `copy`, `aac`, `libopus` (default: `copy`)
+- `--preset` — Encoder preset, e.g. `5`
+- `--extra` — Extra ffmpeg arguments (repeatable), e.g. `--extra "-svtav1-params tune=0"`
+- `--acodec` — Audio codec: `copy`, `aac`, `libopus`, `libvorbis`, `flac`, `pcm_s16le`, `libmp3lame` (default: `copy`)
 - `--ab` — Audio bitrate, e.g. `160k`
 - `--resolution` — Output resolution, e.g. `1920x1080`
 - `--compare` — Run VMAF comparison after encoding
@@ -79,4 +81,4 @@ ffvm batch-sweep ./videos --vcodec libsvtav1 --target-vmaf 95.0
 - [x] Better error handling for ffmpeg subprocess failures
 - [ ] Robust VMAF score parsing
 - [ ] Logging for long-running operations (sweep, batch)
-- [ ] UI improvements (progress display, summary tables)
+- [x] UI improvements (progress display, summary tables)

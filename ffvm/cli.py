@@ -37,12 +37,19 @@ class VideoCodecs(str, Enum):
     libx264 = "libx264"
     libx265 = "libx265"
     libsvtav1 = "libsvtav1"
+    libvpx_vp9 = "libvpx-vp9"
+    libaom_av1 = "libaom-av1"
+    librav1e = "librav1e"
 
 
 class AudioCodecs(str, Enum):
     copy = "copy"
     aac = "aac"
     libopus = "libopus"
+    libvorbis = "libvorbis"
+    flac = "flac"
+    pcm_s16le = "pcm_s16le"
+    libmp3lame = "libmp3lame"
 
 
 def find_videos(path: Path, recursive: bool = False) -> list[Path]:
@@ -66,27 +73,7 @@ def find_videos(path: Path, recursive: bool = False) -> list[Path]:
     return [f for f in path.glob("*") if f.suffix.lower() in video_containers]
 
 
-def clamp_crf(crf: int = 23, vcodec: VideoCodecs = VideoCodecs.libx264) -> int:
-    if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf > 51:
-        console.print(
-            "[bold yellow]CRF value too high! Automatically "
-            "lowered to [bold cyan]51[/bold cyan].[/bold yellow]"
-        )
-        crf = 51
-
-    return crf
-
-
-def clamp_sweep_crf(
-    crf_min: int = 23, crf_max: int = 32, vcodec: VideoCodecs = VideoCodecs.libx264
-) -> tuple[int, int]:
-    if vcodec in (VideoCodecs.libx264, VideoCodecs.libx265) and crf_max > 51:
-        console.print(
-            "[bold yellow]Max CRF value too high! Automatically "
-            "lowered to [bold cyan]51[/bold cyan].[/bold yellow]"
-        )
-        crf_max = 51
-
+def clamp_sweep_crf(crf_min: int = 23, crf_max: int = 32) -> tuple[int, int]:
     if crf_min > crf_max:
         crf_min = crf_max * 2 // 3
         console.print(
@@ -213,6 +200,7 @@ def build_encode_cmd(
     vcodec: VideoCodecs = VideoCodecs.libx264,
     crf: int = 23,
     preset: Optional[str] = None,
+    extra: Optional[list[str]] = None,
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -230,6 +218,10 @@ def build_encode_cmd(
 
     if preset:
         cmd += ["-preset", preset]
+
+    if extra:
+        for arg in extra:
+            cmd += arg.split(None, 1)
 
     cmd += ["-acodec", acodec.value]
 
@@ -394,9 +386,9 @@ def encode(
         ..., exists=True, dir_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
-    crf: int = typer.Option(23, min=0, max=63),
+    crf: int = typer.Option(23, min=0),
     preset: Optional[str] = None,
-    # optional vcodec parameters here soon
+    extra: Optional[list[str]] = typer.Option(None, help="Extra ffmpeg arguments"),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -407,12 +399,10 @@ def encode(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
-    crf = clamp_crf(crf, vcodec)
-
     input_size = input_video.stat().st_size
 
     encode_cmd = build_encode_cmd(
-        input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
+        input_video, output_video, vcodec, crf, preset, extra, acodec, ab, resolution
     )
 
     encode_start = time.time()
@@ -470,9 +460,9 @@ def batch(
         ..., exists=True, file_okay=False, resolve_path=True
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
-    crf: int = typer.Option(23, min=0, max=63),
+    crf: int = typer.Option(23, min=0),
     preset: Optional[str] = None,
-    # optional vcodec parameters
+    extra: Optional[list[str]] = typer.Option(None, help="Extra ffmpeg arguments"),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -483,8 +473,6 @@ def batch(
 ):
     if output_dir is None:
         output_dir = input_dir
-
-    crf = clamp_crf(crf, vcodec)
 
     input_videos = find_videos(input_dir, recursive)
 
@@ -511,7 +499,15 @@ def batch(
         zip(input_videos, output_videos), start=1
     ):
         encode_cmd = build_encode_cmd(
-            input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
+            input_video,
+            output_video,
+            vcodec,
+            crf,
+            preset,
+            extra,
+            acodec,
+            ab,
+            resolution,
         )
 
         encode_start = time.time()
@@ -586,10 +582,10 @@ def sweep(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     preset: Optional[str] = None,
-    # optional vcodec parameters
+    extra: Optional[list[str]] = typer.Option(None, help="Extra ffmpeg arguments"),
     target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
-    crf_min: int = typer.Option(23, min=0, max=62),
-    crf_max: int = typer.Option(32, min=1, max=63),
+    crf_min: int = typer.Option(23, min=0),
+    crf_max: int = typer.Option(32, min=1),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -599,7 +595,7 @@ def sweep(
         typer.confirm(f"{output_video} already exists. Overwrite?", abort=True)
         print("\033[A\033[2K", end="")
 
-    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max, vcodec)
+    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max)
 
     input_size = input_video.stat().st_size
 
@@ -611,7 +607,7 @@ def sweep(
         raise typer.Exit(1)
 
     cmd = build_encode_cmd(
-        input_video, output_video, vcodec, crf, preset, acodec, ab, resolution
+        input_video, output_video, vcodec, crf, preset, extra, acodec, ab, resolution
     )
 
     encode_start = time.time()
@@ -660,10 +656,10 @@ def batch_sweep(
     ),
     vcodec: VideoCodecs = VideoCodecs.libx264,
     preset: Optional[str] = None,
-    # optional vcodec parameters
+    extra: Optional[list[str]] = typer.Option(None, help="Extra ffmpeg arguments"),
     target_vmaf: float = typer.Option(93.0, min=0.1, max=100),
-    crf_min: int = typer.Option(23, min=0, max=62),
-    crf_max: int = typer.Option(32, min=1, max=63),
+    crf_min: int = typer.Option(23, min=0),
+    crf_max: int = typer.Option(32, min=1),
     acodec: AudioCodecs = AudioCodecs.copy,
     ab: Optional[str] = None,
     resolution: Optional[str] = None,
@@ -674,7 +670,7 @@ def batch_sweep(
     if output_dir is None:
         output_dir = input_dir
 
-    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max, vcodec)
+    crf_min, crf_max = clamp_sweep_crf(crf_min, crf_max)
 
     input_videos = find_videos(input_dir, recursive)
 
@@ -717,7 +713,7 @@ def batch_sweep(
         zip(input_videos, output_videos, crfs), start=1
     ):
         encode_cmd = build_encode_cmd(
-            input_video, output_video, vcodec, c, preset, acodec, ab, resolution
+            input_video, output_video, vcodec, c, preset, extra, acodec, ab, resolution
         )
 
         encode_start = time.time()
